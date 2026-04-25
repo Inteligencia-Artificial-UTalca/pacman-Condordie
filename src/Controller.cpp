@@ -17,7 +17,7 @@ Controller::~Controller() {
 }
 
 Move Controller::getMove(const GameState&) {
-	//std::cerr<<"controller getmove \n";
+	std::cerr<<"controller getmove \n";
 	return PASS;
 }
 float euclid2(std::pair<int,int> a,std::pair<int,int> b){

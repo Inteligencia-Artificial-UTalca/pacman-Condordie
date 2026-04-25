@@ -28,7 +28,9 @@ SimpleController::getMove(const GameState& game){
 	
 	
 	int ghostNode = character->getPos();
-	
+	//Coordenadas del fantasma
+	auto ghostCoords = game.getMaze().getNodePos(ghostNode);
+
 	Ghost *ghost = dynamic_cast<Ghost*>(character.get());
 	if(!ghost->isEdible()){
 		int minDist=10000000;
@@ -67,6 +69,6 @@ SimpleController::getMove(const GameState& game){
 		}
 		return maxMove;
 	}
-
+	//	OJO de Condor
 	
 }
