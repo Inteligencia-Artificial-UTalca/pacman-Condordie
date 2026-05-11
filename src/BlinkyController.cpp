@@ -55,7 +55,6 @@ BlinkyController::getMove(const GameState& game){
 				maxMove=m;
 			}
 		}
+	}
 	return PASS;	
-
-	
 }
