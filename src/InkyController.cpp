@@ -1,140 +1,95 @@
 #include "InkyController.h"
+#include "Ghost.h"
+#include <SDL2/SDL.h>
+#include <cmath>
+#include <cstdlib>
 
-Inky_Info* Inky_Info::info=nullptr;
-
-InkyController::InkyController(std::shared_ptr<Character> character):Controller(character),root(std::make_shared<Selector>()){
-	auto filter = std::make_shared<Filter>();
-	filter->addCondition(std::make_shared<Powerpill_Inky>());
-	filter->addAction(std::make_shared<Frightened_Inky>());
-	root->addChild(filter);
-	auto filter2 = std::make_shared<Filter>();
-	filter2->addCondition(std::make_shared<TimeOut_Inky>());
-	filter2->addAction(std::make_shared<Scatter_Inky>());
-	root->addChild(filter2);
-	root->addChild(std::make_shared<Chase_Inky>());
+InkyController::InkyController(std::shared_ptr<Character> character): Controller(character), territory({-1, -1}), territorySet(false) {}
+InkyController::~InkyController() {}
+float InkyController::distToPacman(const GameState& game) const {
+    return std::sqrt(euclid2(
+        game.getMaze().getNodePos(character->getPos()),
+        game.getMaze().getNodePos(game.getPacmanPos())));
 }
 
-InkyController::~InkyController() {
-
+float InkyController::distToPoint(const GameState& game,std::pair<int,int> p) const {
+    return std::sqrt(static_cast<float>(euclid2(game.getMaze().getNodePos(character->getPos()), p)));
 }
 
-Move
-InkyController::getMove(const GameState& gs){
-	Inky_Info::getInfo()->in_character=character;
-	Inky_Info::getInfo()->in_gamestate=&gs;
-	root->tick();
-
-	return Inky_Info::getInfo()->out_move;		
+Move InkyController::getFarthestMove(const GameState& game,std::pair<int,int> target) const {
+    int  maxDist = -1;
+    Move maxMove = character->getDirection();
+    for (Move m : game.getMaze().getPossibleMoves(character->getPos())) {
+        int v = game.getMaze().getNeighbour(character->getPos(), m);
+        if (v < 0) continue;
+        int d = euclid2(game.getMaze().getNodePos(v), target);
+        if (d > maxDist) { maxDist = d; maxMove = m; }
+    }
+    return maxMove;
 }
 
-TimeOut_Inky::TimeOut_Inky() : Behavior() {
-	lastTime = std::chrono::high_resolution_clock::now();
-
+Move InkyController::getClosestMove(const GameState& game,std::pair<int,int> target) const {
+    int  minDist = 10000000;
+    Move minMove = character->getDirection();
+    for (Move m : game.getMaze().getPossibleMoves(character->getPos())) {
+        int v = game.getMaze().getNeighbour(character->getPos(), m);
+        if (v < 0) continue;
+        int d = euclid2(game.getMaze().getNodePos(v), target);
+        if (d < minDist) { minDist = d; minMove = m; }
+    }
+    return minMove;
 }
 
-Status TimeOut_Inky::update(){
-	std::chrono::duration<float> timeStamp = std::chrono::high_resolution_clock::now() - lastTime;
-	if( (int)timeStamp.count()%27 < 7){
-		return BH_SUCCESS;
-	}else{
-		return BH_FAILURE;
-	}
+Move InkyController::getMove(const GameState& game) {
 
-}
+    SDL_Event e;
+    if (SDL_PollEvent(&e) != 0) {
+        if (e.type == SDL_QUIT || (e.type == SDL_KEYDOWN &&(e.key.keysym.sym == SDLK_ESCAPE || e.key.keysym.sym == SDLK_q))) {
+            SDL_Quit();
+            exit(0);
+        }
+    }
 
-Status Chase_Inky::update(){
-	//std::cerr << " Chase \n" ;
-	auto character = Inky_Info::getInfo()->in_character;
-	auto gs = Inky_Info::getInfo()->in_gamestate;
-	auto target= gs->getMaze().getNodePos(gs->getPacmanPos());
-	float min=1000000000;
-	Move minMove=PASS;
-	std::vector<Move> moves;
-	if(character->getDirection()==PASS) {
-		moves=gs->getMaze().getPossibleMoves(character->getPos());
-	} else {
-		moves = gs->getMaze().getGhostLegalMoves(character->getPos(), character->getDirection());
-	}
+    if (!territorySet) {
+        auto startCoord = game.getMaze().getNodePos(character->getPos());
+        territory = { startCoord.first - 60, startCoord.second + 80 };
+        territorySet = true;
+    }
 
-	for(auto move:moves) {
-		if(move==PASS) {
-			break;
-		}
-		float dist = euclid2(target,gs->getMaze().getNodePos(gs->getMaze().getNeighbour(character->getPos(),move)));
-		if(dist<min) {
-			min=dist;
-			minMove=move;
-		}
-	}
-	Inky_Info::getInfo()->out_move = minMove;
-	return BH_SUCCESS;
-}
+    auto ghost = std::dynamic_pointer_cast<Ghost>(character);
+    bool isEdible = (ghost != nullptr) && ghost->isEdible();
 
-Status Powerpill_Inky::update(){
-	auto character = Inky_Info::getInfo()->in_character;
-	auto ghost = dynamic_cast<Ghost*>(character.get());
+    auto pacmanCoords = game.getMaze().getNodePos(game.getPacmanPos());
+    float dPacman = distToPacman(game);
 
-	if( ghost!=nullptr && ghost->isEdible()){
-		return BH_SUCCESS;
-	}else{
-		return BH_FAILURE;
-	}
+    if (isEdible) {
+        float uPanic = 1.0f - 1.0f /
+            (1.0f + std::pow(2.718f * 0.45f, -dPacman + 5.0f));
+        (void)uPanic; // siempre huye cuando es comestible
+        return getFarthestMove(game, pacmanCoords);
+    }
 
-}
+    constexpr float FEAR_RADIUS   = 35.0f;
+    constexpr float COWARD_THRESH = 0.4f;
 
-Frightened_Inky::Frightened_Inky() : Behavior(), e(rand()), uniform_dist(0,3){
+    float uCoward = 1.0f - 1.0f /
+        (1.0f + std::pow(2.718f * 0.3f, -dPacman + FEAR_RADIUS));
 
-}
+    if (uCoward > COWARD_THRESH) {
+        // Huir de Pac-Man
+        return getFarthestMove(game, pacmanCoords);
+    }
 
-Status Frightened_Inky::update(){
-	//std::cerr << " Frightened \n" ;
-	auto character = Inky_Info::getInfo()->in_character;
-	auto gs = Inky_Info::getInfo()->in_gamestate;
-	std::vector<Move> moves;
-	if(character->getDirection()==PASS) {
-		moves=gs->getMaze().getPossibleMoves(character->getPos());
-	} else {
-		moves = gs->getMaze().getGhostLegalMoves(character->getPos(), character->getDirection());
-	}
-	Move m = moves[rand()%moves.size()];
-	Inky_Info::getInfo()->out_move = m;
-	return BH_SUCCESS; //NO es as� pero por ahora
-}
+    constexpr float MAX_DIST = 120.0f;
+    float dTerr  = std::min(distToPoint(game, territory), MAX_DIST);
+    float uTerr  = std::pow((MAX_DIST - dTerr) / MAX_DIST, 2);
 
-Scatter_Inky :: Scatter_Inky() : Behavior(){
-	target = std::make_pair(-1,-1);
+    if (uTerr > 0.7f) {
+        auto moves = game.getMaze().getPossibleMoves(character->getPos());
+        if (!moves.empty())
+            return moves[std::rand() % moves.size()];
+    }
 
-}
-
-Status Scatter_Inky::update(){
-	//std::cerr << " Scatter \n" ;
-	if(target.first == -1){
-		target = Inky_Info::getInfo()->in_gamestate->getMaze().getPowerPillPositions()[0];
-	}
-
-	auto character = Inky_Info::getInfo()->in_character;
-	auto gs = Inky_Info::getInfo()->in_gamestate;
-
-	Move minMove=PASS;
-	std::vector<Move> moves;
-	if(character->getDirection()==PASS) {
-		moves=gs->getMaze().getPossibleMoves(character->getPos());
-	} else {
-		moves = gs->getMaze().getGhostLegalMoves(character->getPos(), character->getDirection());
-	}
-
-	float min=100000000;
-	for(auto move:moves) {
-		if(move==PASS) {
-			break;
-		}
-		float dist = euclid2(target,gs->getMaze().getNodePos(gs->getMaze().getNeighbour(character->getPos(),move)));
-		if(dist<min) {
-			min=dist;
-			minMove=move;
-		}
-	}
-	Inky_Info::getInfo()->out_move = minMove;
-	return BH_SUCCESS;
-
+    // Moverse hacia el centro
+    return getClosestMove(game, territory);
 }

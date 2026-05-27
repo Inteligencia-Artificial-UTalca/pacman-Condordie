@@ -1,120 +1,180 @@
 #include "PacmanController.h"
 #include <SDL2/SDL.h>
+#include <cmath>
 
+PacmanController::PacmanController(std::shared_ptr<Character> character): Controller(character) {}
+PacmanController::~PacmanController() {}
 
-PacmanController::PacmanController(std::shared_ptr<Character> character):
-	Controller(character){
-}
-PacmanController::~PacmanController() {
-	// TODO Auto-generated destructor stub
-}
-
-
-Move PacmanController::getClosestMove(const GameState& game, std::pair<int,int> target)const{
-	int minDist=10000000;
-	Move minMove=character->getDirection();
-	std::vector<Move> moves=game.getMaze().getPossibleMoves(character->getPos());
-	for(Move m:moves){
-		int vecino = game.getMaze().getNeighbour(character->getPos(),m);
-		if(vecino<0)continue;
-		auto vecinoCoords = game.getMaze().getNodePos(vecino);
-		int sqDist=euclid2(vecinoCoords,target);
-		if(sqDist<minDist){
-			minDist=sqDist;
-			minMove=m;
-		}
-	}
-	return minMove;
+static Move oppositeOf(Move m) {
+    if (m == UP)    return DOWN;
+    if (m == DOWN)  return UP;
+    if (m == LEFT)  return RIGHT;
+    if (m == RIGHT) return LEFT;
+    return PASS;
 }
 
-Move PacmanController::getFarthestMove(const GameState& game, std::pair<int,int> target)const{
-	int maxDist=-1;
-	Move maxMove=character->getDirection();
-	std::vector<Move> moves=game.getMaze().getPossibleMoves(character->getPos());
-	for(Move m:moves){
-		int vecino = game.getMaze().getNeighbour(character->getPos(),m);
-		if(vecino<0)continue;
-		auto vecinoCoords = game.getMaze().getNodePos(vecino);
-		int sqDist=euclid2(vecinoCoords,target);
-		if(sqDist>maxDist){
-			maxDist=sqDist;
-			maxMove=m;
-		}
-	}
-	return maxMove;
+Move PacmanController::getClosestMove(const GameState& game, std::pair<int,int> target) const {
+    int  minDist = 10000000;
+    Move minMove = character->getDirection();
+    for (Move m : game.getMaze().getPossibleMoves(character->getPos())) {
+        int v = game.getMaze().getNeighbour(character->getPos(), m);
+        if (v < 0) continue;
+        int d = euclid2(game.getMaze().getNodePos(v), target);
+        if (d < minDist) { minDist = d; minMove = m; }
+    }
+    return minMove;
 }
 
-float PacmanController::getDistanceToGhost(const GameState& game, int g)const{
-	return sqrt(euclid2(
-		game.getMaze().getNodePos(character->getPos()),
-		game.getMaze().getNodePos(game.getGhostsPos(g))));
+Move PacmanController::getFarthestMove(const GameState& game,std::pair<int,int> target) const {
+    int  maxDist = -1;
+    Move maxMove = character->getDirection();
+    for (Move m : game.getMaze().getPossibleMoves(character->getPos())) {
+        int v = game.getMaze().getNeighbour(character->getPos(), m);
+        if (v < 0) continue;
+        int d = euclid2(game.getMaze().getNodePos(v), target);
+        if (d > maxDist) { maxDist = d; maxMove = m; }
+    }
+    return maxMove;
 }
 
-Move
-PacmanController::getMove(const GameState& game){
+Move PacmanController::getEscapeMoveFromAll(
+        const GameState& game,
+        const std::vector<std::pair<int,int>>& threats) const {
 
-	//para cerrar la ventana
-	SDL_Event e;
-	if( SDL_PollEvent( &e ) != 0 )
-	{
-		if( e.type == SDL_QUIT || 
-			(e.type == SDL_KEYDOWN && 
-				(e.key.keysym.sym==SDLK_ESCAPE || 
-				e.key.keysym.sym==SDLK_q) ))
-		{
-			SDL_Quit();
-			exit(0);
-		}
-	}
-	
-	int pacmanNode = character->getPos();
-	auto pacmanCoords = game.getMaze().getNodePos(pacmanNode);
-	
-	std::vector<std::pair<int,int>> ghostPositions;
-	for(int i=0;i<4;i++){
-		ghostPositions.push_back(game.getMaze().getNodePos(game.getGhostsPos(i)));
-	}
+    Move currentDir = character->getDirection();
+    Move opposite   = oppositeOf(currentDir);
+    auto moves      = game.getMaze().getPossibleMoves(character->getPos());
 
-	std::vector<bool> ghostsEdible;
-	for(int i=0;i<4;i++){
-		ghostsEdible.push_back(game.isGhostEdible(i));
-	}
+    Move bestMove  = currentDir;
+    int  bestScore = -1;
 
-	auto powerPillPositions=game.getMaze().getPowerPillPositions();	
-
-
-	float fear=0.0f;
-	Move escapeMove=PASS;
-	float hunger=0.0f;
-	Move eatGhostMove=PASS;
-
-
-
-	//arrancar de fantasmas cercanos que me pueden comer 
-	for(int i=0;i<4;i++){
-		if((!ghostsEdible[i])){
-			float tempFear=1.0f-1.0f/(1.0f+pow(2.718f * 0.45f,-getDistanceToGhost(game,i)+17.0f));//logistica
-			if(tempFear>fear){
-				fear=tempFear;
-				escapeMove=getFarthestMove(game,ghostPositions[i]);
-			}
-		}
-		
-	}
-
-	//perseguir fantasmas azules
-	for(int i=0;i<4;i++){
-		if(ghostsEdible[i]){
-			float tempHunger=(pow(100.0f-getDistanceToGhost(game,i),2)/pow(100.0,2));//cuadratica
-			if(tempHunger>hunger){
-				hunger=tempHunger;
-				eatGhostMove=getClosestMove(game,ghostPositions[i]);;
-			}
-		}
-	}
-	//std::cout<<"fear="<<fear<<std::endl;
-	//std::cout<<"hunger="<<hunger<<std::endl;
-	if(fear>hunger)return escapeMove;
-	else return eatGhostMove;
+    for (Move m : moves) {
+        if (m == opposite && moves.size() > 1) continue;
+        int v = game.getMaze().getNeighbour(character->getPos(), m);
+        if (v < 0) continue;
+        auto vc = game.getMaze().getNodePos(v);
+        int total = 0;
+        for (auto& t : threats) total += euclid2(vc, t);
+        if (total > bestScore) { bestScore = total; bestMove = m; }
+    }
+    return bestMove;
 }
 
+Move PacmanController::getExploreMove(const GameState& game) const {
+    int  pacNode  = character->getPos();
+    auto pacCoord = game.getMaze().getNodePos(pacNode);
+    Move opposite = oppositeOf(character->getDirection());
+
+    auto pills      = game.getMaze().getPillPositions();
+    auto powerPills = game.getMaze().getPowerPillPositions();
+    pills.insert(pills.end(), powerPills.begin(), powerPills.end());
+    if (pills.empty()) return PASS;
+
+    // Pill mas cercana
+    auto  closest = pills[0];
+    float minD    = euclid2(pacCoord, pills[0]);
+    for (auto& p : pills) {
+        float d = euclid2(pacCoord, p);
+        if (d < minD) { minD = d; closest = p; }
+    }
+
+    Move desired = getClosestMove(game, closest);
+    if (desired == opposite) {
+        for (Move m : game.getMaze().getPossibleMoves(pacNode)) {
+            if (m != opposite && game.getMaze().getNeighbour(pacNode, m) >= 0)
+                return m;
+        }
+    }
+    return desired;
+}
+
+float PacmanController::getDistanceToGhost(const GameState& game, int g) const {
+    return std::sqrt(euclid2(
+        game.getMaze().getNodePos(character->getPos()),
+        game.getMaze().getNodePos(game.getGhostsPos(g))));
+}
+
+Move PacmanController::getMove(const GameState& game) {
+
+    // Cierre de ventana
+    SDL_Event e;
+    if (SDL_PollEvent(&e) != 0) {
+        if (e.type == SDL_QUIT ||
+            (e.type == SDL_KEYDOWN && (e.key.keysym.sym == SDLK_ESCAPE || e.key.keysym.sym == SDLK_q))) {
+            SDL_Quit();
+            exit(0);
+        }
+    }
+
+    int pacNode = character->getPos();
+    Move opposite = oppositeOf(character->getDirection());
+
+    std::vector<std::pair<int,int>> ghostPos;
+    std::vector<bool>               edible;
+    for (int i = 0; i < 4; i++) {
+        ghostPos.push_back(game.getMaze().getNodePos(game.getGhostsPos(i)));
+        edible.push_back(game.isGhostEdible(i));
+    }
+
+    float fear         = 0.0f;
+    float hunger       = 0.0f;
+    Move  eatGhostMove = PASS;
+    std::vector<std::pair<int,int>> threats;
+
+    // Miedo: funcion logistica, umbral de amenaza activa = 0.15
+    for (int i = 0; i < 4; i++) {
+        if (!edible[i]) {
+            float d = getDistanceToGhost(game, i);
+            float u = 1.0f - 1.0f / (1.0f + std::pow(2.718f * 0.45f, -d + 20.0f));
+            if (u > 0.15f) {
+                threats.push_back(ghostPos[i]);
+                if (u > fear) fear = u;
+            }
+        }
+    }
+
+    // Hambre: funcion cuadratica con factor 1.5
+    for (int i = 0; i < 4; i++) {
+        if (edible[i]) {
+            float d = getDistanceToGhost(game, i);
+            float u = 1.5f * std::pow((100.0f - d) / 100.0f, 2);
+            if (u > hunger) {
+                hunger       = u;
+                eatGhostMove = getClosestMove(game, ghostPos[i]);
+            }
+        }
+    }
+
+    Move finalMove = PASS;
+
+    if (fear > 0.3f && !threats.empty()) {
+        finalMove = getEscapeMoveFromAll(game, threats);
+
+    } else if (hunger > 0.1f) {
+        // Persecucion de fantasma comestible (evitar retroceder)
+        if (eatGhostMove == opposite) {
+            bool changed = false;
+            for (Move m : game.getMaze().getPossibleMoves(pacNode)) {
+                if (m != opposite && game.getMaze().getNeighbour(pacNode, m) >= 0) {
+                    finalMove = m;
+                    changed   = true;
+                    break;
+                }
+            }
+            if (!changed) finalMove = eatGhostMove;
+        } else {
+            finalMove = eatGhostMove;
+        }
+
+    } else {
+        // Exploracion hacia la pill mas cercana
+        finalMove = getExploreMove(game);
+    }
+
+    if (game.getMaze().getNeighbour(pacNode, finalMove) < 0) {
+        auto possible = game.getMaze().getPossibleMoves(pacNode);
+        if (!possible.empty()) finalMove = possible[0];
+    }
+
+    return finalMove;
+}
